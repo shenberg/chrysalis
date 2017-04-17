@@ -85,7 +85,7 @@ void loop() {
   float voltage = pot * (5.0 / 1023.0);
   // print out the value you read:
   Serial.println(voltage);
-  if (voltage > 2.5){ 
+  if (voltage > 4){ 
     // Call the current pattern function once, updating the 'leds' array
     gPatterns[gCurrentPatternNumber]();
   }                           
