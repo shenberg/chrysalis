@@ -28,6 +28,8 @@
 
 #include "FastLed.h"
 
+#include "states.h"
+
 FASTLED_USING_NAMESPACE
 
 #if defined(FASTLED_VERSION) && (FASTLED_VERSION < 3001000)
@@ -77,6 +79,8 @@ CRGB leds[NUM_LEDS];
 #define BOTTOM_CRYSTAL_HI 100  
 
 #define VOLTAGE_THRESHOLD 4
+// slightly lower threshold to debounce via hysteresis
+#define VOLTAGE_RAMPING_THRESHOLD 3.5
 
 #define RAMP_UP_TIME  5000
 
@@ -143,12 +147,49 @@ SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
-long touchStartTime = -1;
-long lastTime = 0;
-bool touching = false;
 
 float voltage = 0;
 #define FILTER_STRENGTH 0.9
+
+
+
+State currentState;
+long transitionTime = 0;
+long lastTime = 0; // for delta_t calculation
+
+State transitionState() {
+  switch(currentState) {
+  case IDLE:
+    // TODO: && !ramping_down
+    if (voltage > VOLTAGE_THRESHOLD) {
+      Serial.println("Touch started!");
+
+      return RAMPING_UP;
+    }
+    // TODO: decrease charge according to time delta and given rate
+    break;
+  case RAMPING_UP:
+    // TODO: increase charge, make transition to active according to charge, not time from start
+    if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
+      Serial.println("Touch ended before trigger");
+      return IDLE; // TODO:  ramping down
+    } else if (millis() - transitionTime > RAMP_UP_TIME) {
+      Serial.println("TRIGGER!");
+      return ACTIVE;
+    }
+    break;
+  case ACTIVE:
+    if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
+      Serial.println("Touch ended");
+      return IDLE; // TODO: ramping down
+    }
+    break;
+  default:
+    Serial.println("crap!");
+  }
+  return currentState;
+}
+
 // the loop routine runs over and over again forever:
 void loop() {
   // read the input on analog pin 0:
@@ -159,36 +200,24 @@ void loop() {
   voltage = voltage * FILTER_STRENGTH + (1 - FILTER_STRENGTH) * pot * (5.0 / 1023.0);
   // print out the value you read:
   //Serial.println(voltage);
+  State newState = transitionState();
+
   long currentTime = millis();
-  if (voltage > VOLTAGE_THRESHOLD){
-    if (touchStartTime == -1) {
-      touching = false;
-      touchStartTime = currentTime;
-      Serial.println("Touch started!");
-    }
-    if ((currentTime - touchStartTime) < RAMP_UP_TIME) {
-      drawRampUp(currentTime - touchStartTime);
-    } else {
-      if (!touching) {
-        Serial.println(touchStartTime);
-        Serial.println(currentTime);
-        Serial.println("TRIGGER!");
-        touching = true;
-      }
+  if (newState != currentState) {
+    transitionTime = currentTime;
+    currentState = newState;
+  }
+
+  switch(currentState) {
+    case IDLE:
+      drawIdle();
+      break;
+    case RAMPING_UP:
+      drawRampUp(millis() - transitionTime);
+      break;
+    case ACTIVE:
       drawTouching();
-    }
-    // Call the current pattern function once, updating the 'leds' array
-    //gPatterns[gCurrentPatternNumber]();
-  }                           
-  else{
-    if (touchStartTime != -1) {
-      // TODO: ramp-down too
-      touchStartTime = -1;
-      touching = false;
-      Serial.println("Touch ended!");
-    }
-    drawIdle();
-    //FastLED.clear();
+      break;
   }
   lastTime = currentTime;
 
