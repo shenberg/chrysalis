@@ -47,7 +47,8 @@ FASTLED_USING_NAMESPACE
   Reads an analog input on pin 0, converts it to voltage, and prints the result to the serial monitor.
   Attach the center pin of a potentiometer to pin A0, and the outside pins to +5V and ground.
   */
-int ActivateDrop=13;
+#define VOLTAGE_UP_PIN 13
+#define VOLTAGE_READ_PIN A0
 
 constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13, 9};
 
@@ -77,15 +78,18 @@ CRGB leds[NUM_LEDS];
 
 #define VOLTAGE_THRESHOLD 4
 
-#define RAMP_UP_TIME 5000
-
+#define RAMP_UP_TIME  5000
 
 void drawTopCrystalIdle(byte startPixel, byte length) {
-
+  fill_solid(&leds[startPixel], length, CRGB::Red);
 }
 
 void drawRegularCrylstalIdle(byte startPixel, byte length) {
+  fill_solid(&leds[startPixel], length, CRGB::DarkGreen);
+}
 
+void drawTopCrystalRampUp(byte startPixel, byte length) {
+  fill_solid(&leds[startPixel], length, CRGB::White);
 }
 
 void drawIdle() {
@@ -108,11 +112,11 @@ void drawRampUp(int offset) {
     drawRegularCrylstalIdle(start, length);
     start += length;
   }
-  drawTopCrystalIdle(start, pixelCounts[index]);  
+  drawTopCrystalRampUp(start, pixelCounts[index]);  
 }
 
 void drawTouching() {
-  
+  FastLED.clear();
 }
 
 // the setup routine runs once when you press reset:
@@ -120,8 +124,7 @@ void setup() {
   // initialize serial communication at 9600 bits per second:
   Serial.begin(9600);
   // set the digital pins as outputs
-  pinMode(ActivateDrop, OUTPUT);
-
+  pinMode(VOLTAGE_UP_PIN, OUTPUT);
 
   delay(3000); // 3 second delay for recovery
   
@@ -142,32 +145,48 @@ uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
 long touchStartTime = -1;
 long lastTime = 0;
+bool touching = false;
 
+float voltage = 0;
+#define FILTER_STRENGTH 0.9
 // the loop routine runs over and over again forever:
 void loop() {
-  
   // read the input on analog pin 0:
-  int pot = analogRead(A0);
+  int pot = analogRead(VOLTAGE_READ_PIN);
   // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
-  float voltage = pot * (5.0 / 1023.0);
+  // use 1-tap IIR filter: output = last_out*strength + (1-strength) * input
+  // works very well in practice
+  voltage = voltage * FILTER_STRENGTH + (1 - FILTER_STRENGTH) * pot * (5.0 / 1023.0);
   // print out the value you read:
   //Serial.println(voltage);
   long currentTime = millis();
   if (voltage > VOLTAGE_THRESHOLD){
     if (touchStartTime == -1) {
+      touching = false;
       touchStartTime = currentTime;
       Serial.println("Touch started!");
     }
-    if (currentTime - touchStartTime > RAMP_UP_TIME) {
+    if ((currentTime - touchStartTime) < RAMP_UP_TIME) {
       drawRampUp(currentTime - touchStartTime);
     } else {
+      if (!touching) {
+        Serial.println(touchStartTime);
+        Serial.println(currentTime);
+        Serial.println("TRIGGER!");
+        touching = true;
+      }
       drawTouching();
     }
     // Call the current pattern function once, updating the 'leds' array
     //gPatterns[gCurrentPatternNumber]();
   }                           
   else{
-    touchStartTime = -1;
+    if (touchStartTime != -1) {
+      // TODO: ramp-down too
+      touchStartTime = -1;
+      touching = false;
+      Serial.println("Touch ended!");
+    }
     drawIdle();
     //FastLED.clear();
   }
