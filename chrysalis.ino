@@ -38,8 +38,6 @@ FASTLED_USING_NAMESPACE
 //#define CLK_PIN   4
 #define LED_TYPE    WS2811
 #define COLOR_ORDER GRB
-#define NUM_LEDS    64
-CRGB leds[NUM_LEDS];
 
 #define BRIGHTNESS          96
 #define FRAMES_PER_SECOND  120
@@ -49,7 +47,74 @@ CRGB leds[NUM_LEDS];
   Reads an analog input on pin 0, converts it to voltage, and prints the result to the serial monitor.
   Attach the center pin of a potentiometer to pin A0, and the outside pins to +5V and ground.
   */
-  int ActivateDrop=13;
+int ActivateDrop=13;
+
+constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13, 9};
+
+constexpr int sumHelper(const byte *a, const int N) {
+  return a[0] + ((N > 1) ? sumHelper(a+1, N-1) : 0);
+}
+
+template<size_t N>
+constexpr int sum(const byte (&arr)[N]) {
+  return sumHelper(arr, N);
+}
+
+#define NUM_LEDS sum(pixelCounts)
+#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+CRGB leds[NUM_LEDS];
+
+// in seconds
+#define TOP_CRYSTAL_BPM 6
+#define BOTTOM_CRYSTAL_BPM 5
+
+// brightness - 0..255 range
+#define TOP_CRYSTAL_IDLE_LOW 20
+#define TOP_CRYSTAL_IDLE_HI 255
+
+#define BOTTOM_CRYSTAL_LOW 20
+#define BOTTOM_CRYSTAL_HI 100  
+
+#define VOLTAGE_THRESHOLD 4
+
+#define RAMP_UP_TIME 5000
+
+
+void drawTopCrystalIdle(byte startPixel, byte length) {
+
+}
+
+void drawRegularCrylstalIdle(byte startPixel, byte length) {
+
+}
+
+void drawIdle() {
+  byte start = 0;
+  byte index = 0;
+  for(index = 0; index < sizeof(pixelCounts) - 1; index++) {
+    byte length = pixelCounts[index];
+    drawRegularCrylstalIdle(start, length);
+    start += length;
+  }
+  drawTopCrystalIdle(start, pixelCounts[index]);
+}
+
+
+void drawRampUp(int offset) {
+  byte start = 0;
+  byte index = 0;
+  for(index = 0; index < ARRAY_SIZE(pixelCounts ) - 1; index++) {
+    byte length = pixelCounts[index];
+    drawRegularCrylstalIdle(start, length);
+    start += length;
+  }
+  drawTopCrystalIdle(start, pixelCounts[index]);  
+}
+
+void drawTouching() {
+  
+}
+
 // the setup routine runs once when you press reset:
 void setup() {
   // initialize serial communication at 9600 bits per second:
@@ -75,6 +140,8 @@ SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
+long touchStartTime = -1;
+long lastTime = 0;
 
 // the loop routine runs over and over again forever:
 void loop() {
@@ -84,14 +151,27 @@ void loop() {
   // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
   float voltage = pot * (5.0 / 1023.0);
   // print out the value you read:
-  Serial.println(voltage);
-  if (voltage > 4){ 
+  //Serial.println(voltage);
+  long currentTime = millis();
+  if (voltage > VOLTAGE_THRESHOLD){
+    if (touchStartTime == -1) {
+      touchStartTime = currentTime;
+      Serial.println("Touch started!");
+    }
+    if (currentTime - touchStartTime > RAMP_UP_TIME) {
+      drawRampUp(currentTime - touchStartTime);
+    } else {
+      drawTouching();
+    }
     // Call the current pattern function once, updating the 'leds' array
-    gPatterns[gCurrentPatternNumber]();
+    //gPatterns[gCurrentPatternNumber]();
   }                           
   else{
-    FastLED.clear();
+    touchStartTime = -1;
+    drawIdle();
+    //FastLED.clear();
   }
+  lastTime = currentTime;
 
   // send the 'leds' array out to the actual LED strip
   FastLED.show();  
@@ -100,13 +180,9 @@ void loop() {
   delay(1000/FRAMES_PER_SECOND);
 
   // do some periodic updates
-  EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-  EVERY_N_SECONDS( 10 ) { nextPattern(); } // change patterns periodically
+  //EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
+  //EVERY_N_SECONDS( 10 ) { nextPattern(); } // change patterns periodically
 }
-
-
-
-#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
 void nextPattern()
 {
