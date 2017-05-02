@@ -171,12 +171,14 @@ State transitionState() {
   case RAMPING_UP:
     // TODO: increase charge, make transition to active according to charge, not time from start
     if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
+      // TOOD: charge -= CHARGE_LOSS_RATE * deltaT; if (charge <= 0) {charge = 0; return IDLE;} else {return RAMPING_UP;}
       Serial.println("Touch ended before trigger");
       return IDLE; // TODO:  ramping down
     } else if (millis() - transitionTime > RAMP_UP_TIME) {
       Serial.println("TRIGGER!");
       return ACTIVE;
     }
+    // TOOD: charge += CHARGE_GAIN_RATE * deltaT; if (charge >= TRIGGER_THRESHOLD) {return ACTIVE;} else {return RAMPING_UP;}
     break;
   case ACTIVE:
     if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
@@ -190,6 +192,10 @@ State transitionState() {
   return currentState;
 }
 
+float charge = 0;
+uint16_t phase = 0;
+
+
 // the loop routine runs over and over again forever:
 void loop() {
   // read the input on analog pin 0:
@@ -199,7 +205,7 @@ void loop() {
   // works very well in practice
   voltage = voltage * FILTER_STRENGTH + (1 - FILTER_STRENGTH) * pot * (5.0 / 1023.0);
   // print out the value you read:
-  //Serial.println(voltage);
+  Serial.println(voltage);
   State newState = transitionState();
 
   long currentTime = millis();
@@ -210,12 +216,15 @@ void loop() {
 
   switch(currentState) {
     case IDLE:
+      //phase += IDLE_FREQ*deltaT;
       drawIdle();
       break;
     case RAMPING_UP:
+      //phase += (lerp16(charge, IDLE_FREQ, RAMP_UP_MAX_FREQ)*deltaT;
       drawRampUp(millis() - transitionTime);
       break;
     case ACTIVE:
+      //phase =  ??
       drawTouching();
       break;
   }
