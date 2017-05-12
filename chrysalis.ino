@@ -65,7 +65,8 @@ constexpr int sum(const byte (&arr)[N]) {
 
 #define NUM_LEDS sum(pixelCounts)
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
-CRGB leds[NUM_LEDS];
+//CRGB leds[NUM_LEDS];
+CRGBArray<NUM_LEDS> leds;
 
 // in seconds
 #define TOP_CRYSTAL_BPM 6
@@ -84,6 +85,16 @@ CRGB leds[NUM_LEDS];
 
 #define RAMP_UP_TIME  5000
 
+// 10 seconds for 1 beat, like a deep breath
+#define IDLE_FREQ (65536/10)
+#define RAMP_UP_FREQ (65536*5)
+// charge loss of entire charge in 2 second
+#define MAX_CHARGE (100*256)
+#define CHARGE_LOSS_RATE (MAX_CHARGE/10)
+#define CHARGE_GAIN_RATE (MAX_CHARGE/20)
+#define TRIGGER_THRESHOLD MAX_CHARGE
+
+
 void drawTopCrystalIdle(byte startPixel, byte length) {
   fill_solid(&leds[startPixel], length, CRGB::Red);
 }
@@ -96,31 +107,41 @@ void drawTopCrystalRampUp(byte startPixel, byte length) {
   fill_solid(&leds[startPixel], length, CRGB::White);
 }
 
-void drawIdle() {
+void drawTouching() {
+  FastLED.clear();
+}
+
+
+#define IDLE_MIN_BRIGHTNESS 0
+#define IDLE_MAX_BRIGHTNESS 255
+#define IDLE_MAX_CHARGE_BRIGHTNESS 90
+
+//#define 
+
+void drawIdle(uint16_t phase, uint16_t charge) {
   byte start = 0;
   byte index = 0;
   for(index = 0; index < sizeof(pixelCounts) - 1; index++) {
     byte length = pixelCounts[index];
+    // TODO: clear pixels instead?
     drawRegularCrylstalIdle(start, length);
     start += length;
   }
-  drawTopCrystalIdle(start, pixelCounts[index]);
-}
-
-
-void drawRampUp(int offset) {
-  byte start = 0;
-  byte index = 0;
-  for(index = 0; index < ARRAY_SIZE(pixelCounts ) - 1; index++) {
-    byte length = pixelCounts[index];
-    drawRegularCrylstalIdle(start, length);
-    start += length;
+  if (charge >= MAX_CHARGE) {
+    charge = MAX_CHARGE - 1;
   }
-  drawTopCrystalRampUp(start, pixelCounts[index]);  
-}
-
-void drawTouching() {
-  FastLED.clear();
+  byte chargeBrightness = (long)charge * 256 / MAX_CHARGE;
+  Serial.println(charge);
+  CRGB pulseColor = CRGB::Red;
+  fract16 animationPosition = sin16(phase) + 32767; // convert to range 0..65534
+  //Serial.println(animationPosition);
+  //Serial.println(lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8));
+  pulseColor.nscale8(lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8));
+  //Serial.println(pulseColor.r);
+  CRGB chargeColor = CRGB::Cyan;
+  chargeColor.nscale8(lerp8by8(0, IDLE_MAX_CHARGE_BRIGHTNESS, chargeBrightness));
+  
+  leds(NUM_LEDS - pixelCounts[sizeof(pixelCounts) - 1], NUM_LEDS - 1) = pulseColor + chargeColor;
 }
 
 // the setup routine runs once when you press reset:
@@ -157,32 +178,48 @@ State currentState;
 long transitionTime = 0;
 long lastTime = 0; // for delta_t calculation
 
-State transitionState() {
+// signed 7.8 fixed point int
+saccum78 charge = 0;
+// unsigned 16 bit fraction
+fract16 phase = 0;
+
+State transition(uint16_t deltaT) {
   switch(currentState) {
   case IDLE:
     // TODO: && !ramping_down
     if (voltage > VOLTAGE_THRESHOLD) {
       Serial.println("Touch started!");
-
       return RAMPING_UP;
     }
-    // TODO: decrease charge according to time delta and given rate
+    if (charge > 0) {
+      // note: assuming deltaT never > 255 ms. seems reasonable;
+      charge -= lerp16by8(0, CHARGE_LOSS_RATE, deltaT);
+      if (charge < 0) {
+        charge = 0;
+      }
+    }
     break;
   case RAMPING_UP:
     // TODO: increase charge, make transition to active according to charge, not time from start
     if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
-      // TOOD: charge -= CHARGE_LOSS_RATE * deltaT; if (charge <= 0) {charge = 0; return IDLE;} else {return RAMPING_UP;}
       Serial.println("Touch ended before trigger");
       return IDLE; // TODO:  ramping down
-    } else if (millis() - transitionTime > RAMP_UP_TIME) {
-      Serial.println("TRIGGER!");
-      return ACTIVE;
+    } else {
+      // note: assuming deltaT never > 255 ms. seems reasonable;
+      //Serial.println(charge);
+      charge += lerp16by8(0, CHARGE_GAIN_RATE, deltaT);
+      if (charge >= TRIGGER_THRESHOLD) {
+        charge = TRIGGER_THRESHOLD;
+        Serial.println("TRIGGER!");
+        //TODO:return after debugging pulse
+        return ACTIVE;
+      }
     }
-    // TOOD: charge += CHARGE_GAIN_RATE * deltaT; if (charge >= TRIGGER_THRESHOLD) {return ACTIVE;} else {return RAMPING_UP;}
     break;
   case ACTIVE:
     if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
       Serial.println("Touch ended");
+      charge = 0;
       return IDLE; // TODO: ramping down
     }
     break;
@@ -192,9 +229,12 @@ State transitionState() {
   return currentState;
 }
 
-float charge = 0;
-uint16_t phase = 0;
-
+void activeAnimation() {
+  // animate moving the energy down
+  // animate crystals lighting up
+  // animate lit crystals
+  // fade to idle
+}
 
 // the loop routine runs over and over again forever:
 void loop() {
@@ -205,34 +245,45 @@ void loop() {
   // works very well in practice
   voltage = voltage * FILTER_STRENGTH + (1 - FILTER_STRENGTH) * pot * (5.0 / 1023.0);
   // print out the value you read:
-  Serial.println(voltage);
-  State newState = transitionState();
+  //Serial.println(voltage);
+  //Serial.println(charge);
+  digitalWrite(9, (voltage > 4 ? HIGH : LOW));
 
+  
   long currentTime = millis();
+
+  uint16_t deltaT = currentTime - lastTime;
+  State newState = transition(deltaT);
   if (newState != currentState) {
     transitionTime = currentTime;
     currentState = newState;
   }
-
-  switch(currentState) {
-    case IDLE:
-      //phase += IDLE_FREQ*deltaT;
-      drawIdle();
-      break;
-    case RAMPING_UP:
-      //phase += (lerp16(charge, IDLE_FREQ, RAMP_UP_MAX_FREQ)*deltaT;
-      drawRampUp(millis() - transitionTime);
-      break;
-    case ACTIVE:
-      //phase =  ??
-      drawTouching();
-      break;
+  
+  switch (currentState) {
+  case IDLE:
+  case RAMPING_UP:
+  {
+    // TODO: do fast-math verion of this
+    float t = charge/(float)MAX_CHARGE;
+    t = t*t; // nonlinear
+    //Serial.println((t*RAMP_UP_FREQ + (1.f-t)*IDLE_FREQ) * (deltaT/1000.f));
+    phase += (t*RAMP_UP_FREQ + (1.f-t)*IDLE_FREQ) * (deltaT/1000.f);
+    //Serial.println(phase);
+    drawIdle(phase, charge);
+    break;
   }
+  case ACTIVE:
+    activeAnimation();
+    break;
+
+  }
+
   lastTime = currentTime;
 
   // send the 'leds' array out to the actual LED strip
   FastLED.show();  
   // insert a delay to keep the framerate modest
+  // do regular delay so we don't screw over pc<->arduino comms due to interrupts
   //FastLED.delay(1000/FRAMES_PER_SECOND); 
   delay(1000/FRAMES_PER_SECOND);
 
