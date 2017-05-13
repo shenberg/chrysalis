@@ -68,6 +68,7 @@ constexpr int sum(const byte (&arr)[N]) {
 //CRGB leds[NUM_LEDS];
 CRGBArray<NUM_LEDS> leds;
 
+#define TOP_CRYSTAL_SIZE (pixelCounts[ARRAY_SIZE(pixelCounts)-1])
 // in seconds
 #define TOP_CRYSTAL_BPM 6
 #define BOTTOM_CRYSTAL_BPM 5
@@ -138,10 +139,10 @@ void drawIdle(uint16_t phase, uint16_t charge) {
   //Serial.println(lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8));
   pulseColor.nscale8(lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8));
   //Serial.println(pulseColor.r);
-  CRGB chargeColor = CRGB::Cyan;
+  CRGB chargeColor(0,255,255);
   chargeColor.nscale8(lerp8by8(0, IDLE_MAX_CHARGE_BRIGHTNESS, chargeBrightness));
   
-  leds(NUM_LEDS - pixelCounts[sizeof(pixelCounts) - 1], NUM_LEDS - 1) = pulseColor + chargeColor;
+  leds(NUM_LEDS - TOP_CRYSTAL_SIZE, NUM_LEDS - 1) = pulseColor + chargeColor;
 }
 
 // the setup routine runs once when you press reset:
@@ -217,23 +218,98 @@ State transition(uint16_t deltaT) {
     }
     break;
   case ACTIVE:
-    if (voltage < VOLTAGE_RAMPING_THRESHOLD) {
-      Serial.println("Touch ended");
+      Serial.println("activate done");
       charge = 0;
-      return IDLE; // TODO: ramping down
-    }
-    break;
+      return IDLE; 
   default:
     Serial.println("crap!");
   }
   return currentState;
 }
 
+#define ENERGY_DOWN_LENGTH 1500
+#define LIGHT_UP_LENGTH 3000
+#define LIT_LENGTH 5000
+#define FADE_LENGTH 5000
+
+#define START_FRAME_COUNT 50
 void activeAnimation() {
+  CRGBSet topCrystal = leds(NUM_LEDS - TOP_CRYSTAL_SIZE, NUM_LEDS-1);
+
+  // animate to known state: full brightness on top, quickly
+  for(int i = 0; i < START_FRAME_COUNT; i++) {
+    topCrystal.addToRGB(255/(START_FRAME_COUNT-1));
+    delay(1000/FRAMES_PER_SECOND);
+  }
   // animate moving the energy down
+  long startTime = millis();
+  long currentTime = startTime;
+  fill_solid(topCrystal, TOP_CRYSTAL_SIZE, CRGB::White);
+  // set all pixels to white, while constatly darkening,
+  // keep a smaller and smaller set at the bottom constantly white.
+  while (currentTime - startTime < ENERGY_DOWN_LENGTH) {
+    fadeToBlackBy(topCrystal, TOP_CRYSTAL_SIZE, 7);
+
+    // note: -1 for round-down in division which becomes round up
+    byte relativePosition = TOP_CRYSTAL_SIZE - 1 - (currentTime - startTime)*TOP_CRYSTAL_SIZE/ENERGY_DOWN_LENGTH;
+    topCrystal(0,relativePosition) = CRGB::White;
+    FastLED.show();
+    delay(1000/FRAMES_PER_SECOND);
+    currentTime = millis();
+  }
+  Serial.println("lighting up");
+  //TODO: ugh
+  CRGBArray<3> wave;
+  wave(0,3) = CRGB::White;
+  wave[1].fadeToBlackBy(255*2/3);
+  wave[2].fadeToBlackBy(255/3);
+  startTime = currentTime;
+  long dt;
+  // TODO: ugh dt
+  while ((dt = (currentTime - startTime)) < LIGHT_UP_LENGTH) {
+    fadeToBlackBy(leds, NUM_LEDS, 7);
+    // for every non-top crystal, draw blob traveling down
+    byte pixel = 0;
+    for (byte i = 0; i < ARRAY_SIZE(pixelCounts) - 1; i++) {
+      // fixed 8.8 fractional position
+      accum88 relativePosition = 256*(pixel + pixelCounts[i] - 1) - (dt*(pixelCounts[i]*256) / LIGHT_UP_LENGTH);
+      byte upperPixel = relativePosition >> 8;
+      if (upperPixel <= pixel + pixelCounts[i] - 1) {
+        leds[upperPixel].addToRGB(relativePosition & 0xff);
+      }
+      if (upperPixel - 1 >= pixel) {
+        leds[upperPixel - 1].setRGB(255 - (relativePosition & 0xff), 255 - (relativePosition & 0xff), 255 - (relativePosition & 0xff));
+      }
+
+      // go to next crystal
+      pixel += pixelCounts[i];
+    }
+    FastLED.show();
+    delay(1000/FRAMES_PER_SECOND);
+    currentTime = millis();
+  }
+  Serial.println("done lighting up");
   // animate crystals lighting up
   // animate lit crystals
+  startTime = currentTime;
+  while (currentTime - startTime < LIT_LENGTH) {
+    rainbowWithGlitter();
+    gHue++;
+    FastLED.show();
+    delay(1000/FRAMES_PER_SECOND);
+    currentTime = millis();
+  }
   // fade to idle
+  startTime = currentTime;
+  while (currentTime - startTime < FADE_LENGTH) {
+    rainbowWithGlitter();
+    gHue++;
+    byte relativePosition = 255 - (currentTime - startTime)*255/ENERGY_DOWN_LENGTH;
+    leds.nscale8(relativePosition);
+    FastLED.show();
+    delay(1000/FRAMES_PER_SECOND);
+    currentTime = millis();
+  }
 }
 
 // the loop routine runs over and over again forever:
@@ -275,7 +351,6 @@ void loop() {
   case ACTIVE:
     activeAnimation();
     break;
-
   }
 
   lastTime = currentTime;
