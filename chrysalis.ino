@@ -39,7 +39,7 @@ FASTLED_USING_NAMESPACE
 #define DATA_PIN    3
 //#define CLK_PIN   4
 #define LED_TYPE    WS2811
-#define COLOR_ORDER GRB
+#define COLOR_ORDER BGR
 
 #define BRIGHTNESS          96
 #define FRAMES_PER_SECOND  120
@@ -50,6 +50,7 @@ FASTLED_USING_NAMESPACE
   Attach the center pin of a potentiometer to pin A0, and the outside pins to +5V and ground.
   */
 #define VOLTAGE_UP_PIN 13
+#define VOLTAGE_INDICATOR_PIN 6
 #define VOLTAGE_READ_PIN A0
 
 constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13, 9};
@@ -101,7 +102,10 @@ void drawTopCrystalIdle(byte startPixel, byte length) {
 }
 
 void drawRegularCrylstalIdle(byte startPixel, byte length) {
-  fill_solid(&leds[startPixel], length, CRGB::DarkGreen);
+  // TODO: test pattern 1
+  //fill_solid(&leds[startPixel], length, CRGB::DarkGreen);
+  // TODO: test pattern 2 - different color per crystal
+  fill_solid(&leds[startPixel], length, CHSV(startPixel*2, 255, 255));
 }
 
 void drawTopCrystalRampUp(byte startPixel, byte length) {
@@ -117,8 +121,6 @@ void drawTouching() {
 #define IDLE_MAX_BRIGHTNESS 255
 #define IDLE_MAX_CHARGE_BRIGHTNESS 90
 
-//#define 
-
 void drawIdle(uint16_t phase, uint16_t charge) {
   byte start = 0;
   byte index = 0;
@@ -132,7 +134,7 @@ void drawIdle(uint16_t phase, uint16_t charge) {
     charge = MAX_CHARGE - 1;
   }
   byte chargeBrightness = (long)charge * 256 / MAX_CHARGE;
-  Serial.println(charge);
+
   CRGB pulseColor = CRGB::Red;
   fract16 animationPosition = sin16(phase) + 32767; // convert to range 0..65534
   //Serial.println(animationPosition);
@@ -151,6 +153,7 @@ void setup() {
   Serial.begin(9600);
   // set the digital pins as outputs
   pinMode(VOLTAGE_UP_PIN, OUTPUT);
+  pinMode(VOLTAGE_INDICATOR_PIN, OUTPUT);
 
   delay(3000); // 3 second delay for recovery
   
@@ -172,6 +175,7 @@ uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
 float voltage = 0;
 #define FILTER_STRENGTH 0.9
+//#define FILTER_STRENGTH 0
 
 
 
@@ -234,6 +238,7 @@ State transition(uint16_t deltaT) {
 
 #define START_FRAME_COUNT 50
 void activeAnimation() {
+  return; //TODO: remove
   CRGBSet topCrystal = leds(NUM_LEDS - TOP_CRYSTAL_SIZE, NUM_LEDS-1);
 
   // animate to known state: full brightness on top, quickly
@@ -321,9 +326,9 @@ void loop() {
   // works very well in practice
   voltage = voltage * FILTER_STRENGTH + (1 - FILTER_STRENGTH) * pot * (5.0 / 1023.0);
   // print out the value you read:
-  //Serial.println(voltage);
+  Serial.println(voltage);
   //Serial.println(charge);
-  digitalWrite(9, (voltage > 4 ? HIGH : LOW));
+  digitalWrite(VOLTAGE_INDICATOR_PIN, (voltage > VOLTAGE_THRESHOLD ? HIGH : LOW));
 
   
   long currentTime = millis();
@@ -356,7 +361,7 @@ void loop() {
   lastTime = currentTime;
 
   // send the 'leds' array out to the actual LED strip
-  FastLED.show();  
+  FastLED.show();
   // insert a delay to keep the framerate modest
   // do regular delay so we don't screw over pc<->arduino comms due to interrupts
   //FastLED.delay(1000/FRAMES_PER_SECOND); 
