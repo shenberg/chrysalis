@@ -37,12 +37,16 @@ FASTLED_USING_NAMESPACE
 #endif
 
 #define DATA_PIN    3
+#define TOP_CRYSTAL_DATA_PIN 4
 //#define CLK_PIN   4
 #define LED_TYPE    WS2811
 #define COLOR_ORDER BGR
 
 #define BRIGHTNESS          96
 #define FRAMES_PER_SECOND  120
+
+// enable test pattern by commenting-in
+//#define TEST_PATTERN
 
 /*
   ReadAnalogVoltage
@@ -53,8 +57,13 @@ FASTLED_USING_NAMESPACE
 #define VOLTAGE_INDICATOR_PIN 6
 #define VOLTAGE_READ_PIN A0
 
-constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13, 9};
+// number of pixels
+#define TOP_CRYSTAL_SIZE 9
 
+// for all regular crystals
+constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13};
+
+// constexpr doesn't do looks
 constexpr int sumHelper(const byte *a, const int N) {
   return a[0] + ((N > 1) ? sumHelper(a+1, N-1) : 0);
 }
@@ -64,12 +73,14 @@ constexpr int sum(const byte (&arr)[N]) {
   return sumHelper(arr, N);
 }
 
-#define NUM_LEDS sum(pixelCounts)
+#define CRYSTALS_SIZE sum(pixelCounts)
+#define NUM_LEDS (CRYSTALS_SIZE + TOP_CRYSTAL_SIZE)
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+#define CRYSTAL_COUNT ARRAY_SIZE(pixelCounts)
 //CRGB leds[NUM_LEDS];
-CRGBArray<NUM_LEDS> leds;
+CRGBArray<NUM_LEDS> leds; // crystals except top
+CRGBSet topCrystal = leds(CRYSTALS_SIZE - TOP_CRYSTAL_SIZE, NUM_LEDS - 1); 
 
-#define TOP_CRYSTAL_SIZE (pixelCounts[ARRAY_SIZE(pixelCounts)-1])
 // in seconds
 #define TOP_CRYSTAL_BPM 6
 #define BOTTOM_CRYSTAL_BPM 5
@@ -123,13 +134,16 @@ void drawTouching() {
 
 void drawIdle(uint16_t phase, uint16_t charge) {
   byte start = 0;
-  byte index = 0;
-  for(index = 0; index < sizeof(pixelCounts) - 1; index++) {
+
+#ifdef TEST_PATTERN
+  for(byte index = 0; index < CRYSTAL_COUNT; index++) {
     byte length = pixelCounts[index];
     // TODO: clear pixels instead?
     drawRegularCrylstalIdle(start, length);
     start += length;
   }
+#endif
+
   if (charge >= MAX_CHARGE) {
     charge = MAX_CHARGE - 1;
   }
@@ -144,7 +158,8 @@ void drawIdle(uint16_t phase, uint16_t charge) {
   CRGB chargeColor(0,255,255);
   chargeColor.nscale8(lerp8by8(0, IDLE_MAX_CHARGE_BRIGHTNESS, chargeBrightness));
   
-  leds(NUM_LEDS - TOP_CRYSTAL_SIZE, NUM_LEDS - 1) = pulseColor + chargeColor;
+  // draw the top crystal
+  topCrystal.fill_solid(pulseColor + chargeColor);
 }
 
 // the setup routine runs once when you press reset:
@@ -158,11 +173,13 @@ void setup() {
   delay(3000); // 3 second delay for recovery
   
   // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, CRYSTALS_SIZE).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE,TOP_CRYSTAL_DATA_PIN,COLOR_ORDER>(&leds[CRYSTALS_SIZE], TOP_CRYSTAL_SIZE).setCorrection(TypicalLEDStrip);
   //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
 
   // set master brightness control
   FastLED.setBrightness(BRIGHTNESS);
+  FastLED.clear();
 }
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
@@ -238,8 +255,6 @@ State transition(uint16_t deltaT) {
 
 #define START_FRAME_COUNT 50
 void activeAnimation() {
-  return; //TODO: remove
-  CRGBSet topCrystal = leds(NUM_LEDS - TOP_CRYSTAL_SIZE, NUM_LEDS-1);
 
   // animate to known state: full brightness on top, quickly
   for(int i = 0; i < START_FRAME_COUNT; i++) {
@@ -249,7 +264,7 @@ void activeAnimation() {
   // animate moving the energy down
   long startTime = millis();
   long currentTime = startTime;
-  fill_solid(topCrystal, TOP_CRYSTAL_SIZE, CRGB::White);
+  topCrystal.fill_solid(CRGB::White);
   // set all pixels to white, while constatly darkening,
   // keep a smaller and smaller set at the bottom constantly white.
   while (currentTime - startTime < ENERGY_DOWN_LENGTH) {
@@ -262,12 +277,8 @@ void activeAnimation() {
     delay(1000/FRAMES_PER_SECOND);
     currentTime = millis();
   }
+  
   Serial.println("lighting up");
-  //TODO: ugh
-  CRGBArray<3> wave;
-  wave(0,3) = CRGB::White;
-  wave[1].fadeToBlackBy(255*2/3);
-  wave[2].fadeToBlackBy(255/3);
   startTime = currentTime;
   long dt;
   // TODO: ugh dt
@@ -275,7 +286,7 @@ void activeAnimation() {
     fadeToBlackBy(leds, NUM_LEDS, 7);
     // for every non-top crystal, draw blob traveling down
     byte pixel = 0;
-    for (byte i = 0; i < ARRAY_SIZE(pixelCounts) - 1; i++) {
+    for (byte i = 0; i < CRYSTAL_COUNT; i++) {
       // fixed 8.8 fractional position
       accum88 relativePosition = 256*(pixel + pixelCounts[i] - 1) - (dt*(pixelCounts[i]*256) / LIGHT_UP_LENGTH);
       byte upperPixel = relativePosition >> 8;
@@ -309,7 +320,7 @@ void activeAnimation() {
   while (currentTime - startTime < FADE_LENGTH) {
     rainbowWithGlitter();
     gHue++;
-    byte relativePosition = 255 - (currentTime - startTime)*255/ENERGY_DOWN_LENGTH;
+    byte relativePosition = max(0, 255 - (currentTime - startTime)*255/ENERGY_DOWN_LENGTH);
     leds.nscale8(relativePosition);
     FastLED.show();
     delay(1000/FRAMES_PER_SECOND);
