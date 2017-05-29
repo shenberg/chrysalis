@@ -36,13 +36,15 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
+#define NO_TOP
 #define DATA_PIN    3
 #define TOP_CRYSTAL_DATA_PIN 4
 //#define CLK_PIN   4
 #define LED_TYPE    WS2811
-#define COLOR_ORDER BGR
+#define COLOR_ORDER GRB
 
-#define BRIGHTNESS          96
+#define BRIGHTNESS          255
+//#define BRIGHTNESS          255
 #define FRAMES_PER_SECOND  120
 
 // enable test pattern by commenting-in
@@ -57,9 +59,12 @@ FASTLED_USING_NAMESPACE
 #define VOLTAGE_INDICATOR_PIN 6
 #define VOLTAGE_READ_PIN A0
 
+#ifdef NO_TOP
+#define TOP_CRYSTAL_SIZE CRYSTALS_SIZE
+#else
 // number of pixels
 #define TOP_CRYSTAL_SIZE 9
-
+#endif
 // for all regular crystals
 constexpr byte pixelCounts[] = {25, 18, 18, 15, 15, 13, 13};
 
@@ -79,8 +84,11 @@ constexpr int sum(const byte (&arr)[N]) {
 #define CRYSTAL_COUNT ARRAY_SIZE(pixelCounts)
 //CRGB leds[NUM_LEDS];
 CRGBArray<NUM_LEDS> leds; // crystals except top
-CRGBSet topCrystal = leds(CRYSTALS_SIZE - TOP_CRYSTAL_SIZE, NUM_LEDS - 1); 
-
+#ifdef NO_TOP
+#define topCrystal leds
+#else
+CRGBSet topCrystal = leds(CRYSTALS_SIZE, NUM_LEDS - 1); 
+#endif
 // in seconds
 #define TOP_CRYSTAL_BPM 6
 #define BOTTOM_CRYSTAL_BPM 5
@@ -92,9 +100,9 @@ CRGBSet topCrystal = leds(CRYSTALS_SIZE - TOP_CRYSTAL_SIZE, NUM_LEDS - 1);
 #define BOTTOM_CRYSTAL_LOW 20
 #define BOTTOM_CRYSTAL_HI 100  
 
-#define VOLTAGE_THRESHOLD 4
+#define VOLTAGE_THRESHOLD 2.5
 // slightly lower threshold to debounce via hysteresis
-#define VOLTAGE_RAMPING_THRESHOLD 3.5
+#define VOLTAGE_RAMPING_THRESHOLD 2
 
 #define RAMP_UP_TIME  5000
 
@@ -134,6 +142,12 @@ void drawTouching() {
 
 void drawIdle(uint16_t phase, uint16_t charge) {
   byte start = 0;
+  static uint16_t last_phase = phase;
+  static byte t = 0;
+  if (last_phase > phase) {
+    t++;
+  }
+  last_phase = phase;
 
 #ifdef TEST_PATTERN
   for(byte index = 0; index < CRYSTAL_COUNT; index++) {
@@ -159,7 +173,9 @@ void drawIdle(uint16_t phase, uint16_t charge) {
   chargeColor.nscale8(lerp8by8(0, IDLE_MAX_CHARGE_BRIGHTNESS, chargeBrightness));
   
   // draw the top crystal
-  topCrystal.fill_solid(pulseColor + chargeColor);
+  //topCrystal.fill_solid(pulseColor + chargeColor);
+  topCrystal.fill_solid(ColorFromPalette(PartyColors_p, t, lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8)));
+  //leds.fill_solid(pulseColor + chargeColor);
 }
 
 // the setup routine runs once when you press reset:
@@ -174,8 +190,12 @@ void setup() {
   
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, CRYSTALS_SIZE).setCorrection(TypicalLEDStrip);
-  FastLED.addLeds<LED_TYPE,TOP_CRYSTAL_DATA_PIN,COLOR_ORDER>(&leds[CRYSTALS_SIZE], TOP_CRYSTAL_SIZE).setCorrection(TypicalLEDStrip);
+  #ifndef NO_TOP
+  FastLED.addLeds<LED_TYPE,TOP_CRYSTAL_DATA_PIN,COLOR_ORDER>(leds, TOP_CRYSTAL_SIZE).setCorrection(TypicalLEDStrip);
+  //FastLED.addLeds<LED_TYPE,TOP_CRYSTAL_DATA_PIN,COLOR_ORDER>(&leds[CRYSTALS_SIZE], TOP_CRYSTAL_SIZE).setCorrection(TypicalLEDStrip);
+  #endif
   //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+
 
   // set master brightness control
   FastLED.setBrightness(BRIGHTNESS);
@@ -340,8 +360,15 @@ void loop() {
   Serial.println(voltage);
   //Serial.println(charge);
   digitalWrite(VOLTAGE_INDICATOR_PIN, (voltage > VOLTAGE_THRESHOLD ? HIGH : LOW));
-
-  
+  /*
+  // TODO: remove
+  if (voltage > VOLTAGE_THRESHOLD) {
+    leds.fill_solid(CRGB::White);
+  } else {
+    leds.fill_solid(CRGB::Green);
+  }
+  FastLED.show();
+  return;*/
   long currentTime = millis();
 
   uint16_t deltaT = currentTime - lastTime;
