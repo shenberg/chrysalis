@@ -36,7 +36,8 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
-#define NO_TOP
+#define NO_INTERACTION_MODE
+//#define NO_TOP
 #define DATA_PIN    3
 #define TOP_CRYSTAL_DATA_PIN 4
 //#define CLK_PIN   4
@@ -172,10 +173,15 @@ void drawIdle(uint16_t phase, uint16_t charge) {
   CRGB chargeColor(0,255,255);
   chargeColor.nscale8(lerp8by8(0, IDLE_MAX_CHARGE_BRIGHTNESS, chargeBrightness));
   
+#ifdef NO_INTERACTION_MODE
+  byte hue = t*16 + (phase >> 14);
+  leds.fill_solid(CHSV(hue, 255, 255));
+  topCrystal.fill_solid(CHSV(hue + 128, 255, 255));
+#else
   // draw the top crystal
   //topCrystal.fill_solid(pulseColor + chargeColor);
   topCrystal.fill_solid(ColorFromPalette(PartyColors_p, t, lerp8by8(IDLE_MIN_BRIGHTNESS, IDLE_MAX_BRIGHTNESS, animationPosition >> 8)));
-  //leds.fill_solid(pulseColor + chargeColor);
+#endif
 }
 
 // the setup routine runs once when you press reset:
